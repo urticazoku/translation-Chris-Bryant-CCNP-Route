@@ -245,6 +245,303 @@ RID будут такими:
 
 ![][2]  
 
+### Типы сетей OSPF
+
+### Почему типы сетей OSPF важны
+  
+По умолчанию тип сети OSPF зависит от типа сегмента сети. Различные типы сетей OSPF имеют различные значения hello- и dead- таймеров, и это одни из значений, которые должны совпадать для установления соседства между двумя маршрутизаторами. Кроме того, некоторые типы сетей OSPF не имеют DR и BDR, а у других есть особые условия, которые необходимо соблюдать.
+
+Кроме того, они все одинаковые, правильно? :)
+
+Не беспокойтесь, мы рассмотрим каждый тип сети OSPF, необходимый для сдачи экзамена CСNP ROUTE!
+
+Если не указано иное, сегмент сети находится в зоне 0 — основной зоне.
+
+Адрес подсети широковещательной сети — 10.1.1.0/24. Последний октет каждого IP адреса будет номером маршрутизатора. Каждый маршрутизатор имеет петлевой интерфейс, с номером маршрутизатора в каждом октете. (Петлевой интерфейс для R1 — 1.1.1.1/32 и т.д.)
+
+### Широковещательная сеть OSPF
+
+  
+![][8]  
+Конфигурация OSPF в сегменте Ethernet для широковещательной сети будет оставлена по-умолчанию, также будут выбраны DR и BDR, для влияния на выбор DR/BDR можно использовать команду _ip ospf priority_.
+
+Для большого сегмента сети хорошая идея использовать мощные маршрутизаторы для выполнения этих ролей (DR/BDR), так как это влечет за собой нагрузку на CPU. Как всегда, все, что мы делаем на маршрутизаторе имеет свою цену.
+
+Вывод команды _show ip ospf interface ethernet0_ на маршрутизаторе R1 показывает нам тип сети, а также много другой информации. Заметьте, значения по-умолчанию hello- и dead- таймеров широковещательной сети — 10 и 40 секунд соответственно. По-умолчанию dead time равен четырехкратному hello time.
+
+    R1#show ip ospf interface ethernet0
+    Ethernet0 is up, line protocol is up
+      Internet Address 10.1.1.1/24, Area 0
+      Process ID 1, Router ID 1.1.1.1, Network Type BROADCAST, Cost: 10
+      Transmit Delay is 1 sec, State BDR, Priority 1
+      Designated Router (ID) 8.8.8.8, Interface address 10.1.1.5
+      Backup Designated Router (ID) 1.1.1.1, Interface address 10.1.1.1
+      Timer Intervals configured, Hello 10, Dead 40, Wait 40, Retransmit 5
+         Hello due in 00:00:04
+      Index 1/1, flood queue length 0
+
+    Next 0x0(0)/0x0(0)
+    Last flood scan length is 1, maximum is 2
+    Last flood scan time is 0 msec, maximum is 4 msec
+    Neighbor Count is 1, Adjacent neighbor count is 1
+      Adjacent  with neighbor 8.8.8.8 (Designated Router)
+    Supress hello for 0 neighbor(s)
+
+  
+Для широковещательного сегмента _не обязательно_ делать определенный маршрутизатор DR или BDR, но для нашего следующего примера это не так.
+
+### Сеть OSPF NBMA
+
+  
+Сейчас мы добавим еще сегмент к существующей сети, на frame relay. Новый сегмент использует адрес 172.12.123.0/24. От R1 идет два канала PVC до R2 и R3; между «спицами»(spoke) PVC нет. Интерфейс Serial0 каждого маршрутизатора находится в зоне 0.   
+![][9]  
+Последовательные интерфейсы в этом новом сегменте по-умолчанию будут нешироковещательными с множественным доступом (NBMA). Так как узлы сети не образуют полносвязную сеть, хаб-маршрутизатор R1 должен быть DR и здесь может не быть BDR.  
+Почему? У DR и любого потенциального BDR должна быть возможность получать мультикаст от всех остальных маршрутизаторов в сети. В топологии «звезда» у spoke-маршрутизатора нет возможности получать широковещательный или мультикаст трафик от другого spoke-маршрутизатора, так как весь трафик проходит через хаб — а маршрутизаторы не перенаправляют широковещательный или мультикаст трафик!  
+Перед настройкой любой OSPF конфигурации поверх frame relay, убедитесь, что опция _broadcast_ у вас включена!  
+Иначе OSPF пакеты не будут передаваться через frame relay.
+
+    R1(config-if)#frame map ip 172.12.123.2 122 broadcast
+    R1(config-if)#frame map ip 172.12.123.3 123 broadcast
+
+    R1#show frame map
+    Serial0(up): ip 172.12.123.2 dlci 122(0x7A,0x1CA0),static,
+                 broadcast,
+                 CISCO, status defined, active
+    Serial0(up): ip 172.12.123.3 dlci 123(0x7B,0x1CB0),static,
+                 broadcast,
+                 CISCO, status defined, active
+
+  
+Недостаточно просто убедиться, что R1 стал DR — мы должны предотвратить возможность становления DR/BDR для R2 и R3! Для этого изменим приоритет со значения по-умолчанию (1) на 0.
+
+    R2(config)#int s0
+    R2(config-if)#ip ospf priority 0
+
+    R3(config)#int s0
+    R3(config-if)#ip ospf priority 0
+
+  
+Маршрутизатор с наибольшим значением приоритета интерфейса, на котором включен OSPF, становится DR. Если значения приоритета равны, то сравниваются идентификаторы маршрутизаторов (RID), выигрывает — наибольший.  
+Фактически, мы мошенничаем с выбором DR, не оставляя шансов для spoke-маршрутизаторов, даже при исчезновении хаба! Установка приоритета в 0 для spoke-маршрутизаторов не оставляет им возможности стать DR в случае перезагрузки хаб-маршрутизатора.  
+«NB» в слове NBMA означает «нешироковещательный», так что при конфигурировании хаб-маршрутизатора нужно вручную указывать соседей, как показано ниже. Для spoke-маршрутизаторов такое не требуется.
+
+    R1#conf t
+    Enter configuration commands, one per line. End with CTRL+Z. R1(config)#router ospf 1
+    R1(config-router)#network 172.12.123.0 0.0.0.255 area 0
+    R1(config-router)#neighbor 172.12.123.2
+    R1(config-router)#neighbor 172.12.123.3
+
+    R1#show ip ospf interface serial0
+    Serial0 is up, line protocol is up
+      Internet Address 172.12.123.1/24, Area 0
+      Process ID 1, Router ID 1.1.1.1, Network Type NON_BROADCAST, Cost: 64
+      Transmit Delay is 1 sec, State DR, Priority 1
+      Designated Router (ID) 1.1.1.1, Interface address 172.12.123.1
+    No backup designated router on this network
+      Timer intervals configured, Hello 30, Dead 120, Wait 120, Retransmit 5
+        Hello due to 00:00:11
+      Index 2/2, flood queue length 0
+      Next 0x0(0)/0x0(0)
+      Last flood scan length is 1, maximum is 2
+      Last flood scan time is 4 msec, maximum is 4 msec
+      Neighbor Count is 2, Adjacent neighbor count is 2
+        Adjacent with neighbor 3.3.3.3
+        Adjacent with neighbor 2.2.2.2
+      Supress hello for 0 neighbor(s)
+
+  
+У вас может быть сеть NBMA c DR и BDR, но они оба должны быть хаб-маршрутизаторами. Сеть с двумя хабами может использовать один как DR, другой как BDR. Каждый DR или BDR должен иметь статически настроенных соседей; такая настройка не нужна на других маршрутизаторах. (Если у вас много хаб-маршрутизаторов, один из них может быть BDR).  
+Заметьте, hello- и dead- таймеры равны 30 и 120 соответственно. Dead-таймер снова в четыре раза больше, чем hello.  
+Последовательные интерфейсы по-умолчанию NBMA, но вы можете изменить тип сети OSPF интерфейса командой _ip ospf network_.
+
+    R1(config-if)#ip ospf network ?
+      broadcast              Specify OSPF broadcast multi-access network
+      non-broadcast          Specify OSPF NBMA network
+      point-to-multipoint    Specify OSPF point-to-multipoint network
+      point-to-point    Specify OSPF point-to-point network
+
+  
+
+### Типы сетей OSPF Point-To-Point и Point-To-Multipoint
+
+  
+Сейчас мы добавим прямое соединение между R1 и R3, но расположим его в зоне 13. Номер подсети 172.12.13.0/27. Интерфейсы Serial1 обоих маршрутизаторов находятся в этой зоне 13.  
+![][10]  
+Все non-backbone зоны должны иметь маршрутизатор с логическим или физическим интерфейсом в основной зоне 0. В зоне 13 два таких маршрутизатора, так что конфигурация правильная.  
+_show ip ospf interface serial1_ покажет данный сегмент OSPF по-умолчанию для типа сети OSPF point-to-point. Этот вывод показывает также по-умолчанию hello- и dead- таймеры для данного типа сети — 10 и 40 секунд соответственно.
+
+    R1#show ip ospf interface serial1
+    Serial1 is up, line protocol is up
+      Internet Address 172.12.13.3/27, Area 13
+      Process ID 1, Router ID 3.3.3.3, Network Type POINT_TO_POINT, Cost: 64
+      Transmit Delay is 1 sec, State POINT_TO_POINT,
+      Timer intervals configured, Hello 10, Dead 40, Wait 40, Retransmit 5
+        Hello due to 00:00:08
+      Index 1/2, flood queue length 0
+      Next 0x0(0)/0x0(0)
+      Last flood scan length is 1, maximum is 1
+      Last flood scan time is 0 msec, maximum is 0 msec
+      Neighbor Count is 1, Adjacent neighbor count is 1
+        Adjacent with neighbor 1.1.1.1
+      Supress hello for 0 neighbor(s)
+
+  
+Заметьте, что в списке нет DR и BDR. В канале «точка-точка» только два маршрутизатора. Следовательно, нет необходимости даже иметь DR или BDR, и ни один маршрутизатор не будет выбран в качестве таковых.  
+_show ip ospf neighbor_ показывает прочерки на месте, где обычно указана роль соседа. Процесс выбора DR/BDR опускается в point-to-point и point-to-multipoint сетях. Команда neighbor обычно не нужна в этих сетях. Ниже R3 видит R1 как DR в сети NBMA, тогда как он же без роли видим в сети point-to-point.
+
+    R3#show ip ospf neighbor
+    Neighbor ID   Pri State      Dead Time     Address       Interface
+    1.1.1.1         1 FULL/DR    00:01:46      172.12.123.1  Serial0
+    1.1.1.1         1 FULL/-     00:00:35      172.12.13.1   Serial1
+
+  
+Прочерк после FULL/ показывает, что сосед не является ни DR, ни BDR, ни DROther, что означает, что процесса выбора DR/BDR не было. Вы увидите подобную ситуацию в _OSPF сети point-to-multipoint_, что OSPF воспринимает, как набор каналов point-to-point.  
+Например, мы можем вернуться и изменить конфигурацию OSPF сети frame relay как сети point-to-multipoint командой _ip ospf network point-to-multipoint_ на последовательном интерфейсе маршрутизатора R1. DR/BDR выбраны не будут и команда neighbor не нужна.  
+Теперь сеть OSPF типа point-to-multipoint предлагает два варианта — широковещательная и нет.
+
+### Конфигурация широковещательной OSPF сети Point-To-Multipoint
+
+  
+Этот тип сети не требует команды _neighbor_, но вы можете определить стоимость для данного соседа.
+
+    R1#ip ospf network point-to-multipoint ?
+       non-broadcast     Specify non-broadcast point-to-multipoint network
+       
+
+  
+Заметьте, что опция _broadcast_ отсутствует, так как по-умолчанию сети типа point-to-multipoint — широковещательные.
+
+    R1(config-if)#router ospf 1
+    R1(config-router)#neighbor 172.12.123.2 ?
+               cost            OSPF cost for point-to-multipoint neighbor
+               database-       Filter OSPF LSA during synchronization and flooding for point-to-multipoint
+               filter          neighbor
+               poll-interval   OSPF dead-router polling interval
+               priority        OSPF priority of non-broadcast neighbor
+               
+
+    R1(config-router)#neighbor 172.12.123.2 cost ?
+       <1-65535>   metric
+    R1(config-router)#neighbor 172.12.123.2 cost 20
+
+  
+
+### Нешироковещательная OSPF сеть Point-To-Multipoint
+
+  
+С другой стороны, в нешироковещательной сети point-to-multipoint команда _neighbor_ требуется. Вы можете добавить стоимость для соседа, но соседи _должны_ быть статически определены для данного типа сети.
+
+    R1(config-if)#ip ospf network point-to-multipoint non-broadcast
+
+    R1(config-router)#neighbor 172.12.123.2 cost 15
+    R1(config-router)#neighbor 172.12.123.3 cost 25
+
+  
+
+### Запуск широковещательных OSPF сетей над топологией NBMA
+
+  
+
+### То, что вы можете что-то сделать, не означает, что вы должны это делать!
+
+  
+Нам следует использовать команду _ip ospf network broadcast_ на всех маршрутизаторах сети frame relay, и, так как сеть полносвязная, технически все должно работать и маршрутизаторы будут вести себя так, как если бы были в LAN сети.  
+В реальной жизни использование широковещательной OSPF сети в сегменте NBMA может привести к непредсказуемым результатам, и лично я не стал бы так делать.  
+Зачем тратить время на устранение проблем, когда можно придерживаться настроек по-умолчанию?
+
+### Виртуальный канал (virtual link) OSPF
+
+  
+Настройки OSFP сети, запущенной через frame relay, были восстановлены до значений по-умолчанию для сети типа NBMA и останутся таковыми до конца данного раздела.  
+Сейчас мы добавим маршрутизатор R4 в нашу сеть. R4 и R3 будут соседями через зону 34, у R4 будет петлевой интерфейс в зоне 4. Адрес подсети для сегмента между R3 и R4 — 172.12.34.0/24, сегмент ethernet.  
+![][11]
+
+Результат данной конфигурации — неполные таблицы маршрутизации, что приводит нас к еще одному типу сетей OSPF. С зоной 34 проблем нет — один из маршрутизаторов с интерфейсом в этой зоне, также имеет физический интерфейс в основной зоне (R3).  
+Но в зоне 4 нет ни одного маршрутизатора с интерфейсом в зоне 0. Значит нужно сконфигурировать логическое соединение с зоной 0 — _virtual link_.  
+Так как у маршрутизатора R3 есть интерфейс в зоне 0, запуск виртуального канала между R3 и R4 позволит достичь полной связности в сети. Проблема в том, что у R1 нет маршрута до петлевого интерфейса R4, несмотря на то, что этот интерфейс был включен в OSPF.
+
+    R4: router ospf 1
+          network 4.4.4.4 0.0.0.255 area 4
+          network 172.23.23.0 0.0.0.31 area 34
+
+    R1#show ip route ospf
+          6.0.0.0/32 is subnetted, 1 subnets
+    O        6.6.6.6[110/11] via 10.1.1.5, 01:05:45, Eternet0
+          172.23.0.0/27 is subnetted, 1 subnets
+    O IA     172.23.23.0[110/74] via 172.12.123.3, 00:04:14, Serail0
+          7.0.0.0/32 is subnetted, 1 subnets
+    O        7.7.7.7[110/11] via 10.1.1.5, 01:05:45, Ethernet0
+
+  
+Зона, через которую проходит виртуальный канал называется транзитной (_transit area_), она не может быть stub-зоной любого типа (stub, total stub, nssa) (Если вас раздражают все эти названия — не беспокойтесь, в данном курсе впереди еще будет много информации по ним!).   
+Вот команды для создания виртуального канала:
+
+    R4(config)#router ospf 1
+    R4(config-router)#area 34 virtual link 3.3.3.3
+
+  
+Виртуальные каналы должны быть сконфигурированы на обоих концах транзитной зоны. Сейчас перейдем к R3 и завершим конфигурацию.
+
+    R3(config)#router ospf 1
+    2d07h: %OSPF-4-ERRRCV: Recieved invalid packet: mismatch area ID, from backbone
+    area must be virtual-link but not found from 172.23.23.4 Ethernet0
+    R3(config)#router ospf 1
+    R3(config-router)#area 34 virtual-link 4.4.4.4
+    R3(config-router)#^Z
+    2d07h: %OSPF-5-ADJCHG: Process 1, Nbr 4.4.4.4 on OSPF_VLo from LOADING to
+    FULL, Loading Done
+
+  
+И еще несколько деталей…  
+\--Команда _virtual link_ использует RID удаленного устройства, не обязательно IP адрес интерфейса, находящегося в транзитной зоне. Следите за этим — это очень распространенная ошибка. Проверяйте RID!  
+\--Также не беспокойтесь насчет сообщений об ошибках в выводе команд R3, это нормально, вы будете видеть такие сообщения пока не закончите настраивать виртуальный канал. А вот если сообщения об ошибках появляются _после_ настройки — то у вас проблема.  
+Всегда проверяйте виртуальный канал командой _show ip ospf virtual-link_. Если все настроено правильно, то он должен подняться за секунды.
+
+    R3#show ip ospf virtual-link
+    Virtual Link OSPF_VLo to router 4.4.4.4 is up
+      Run as demand circuit
+      DoNotAge LSA allowed.
+      Transit area 34, via interface Ethernet0, Cost of using 10
+      Transmit Delay is 1 sec, State POINT_TO_POINT
+      Timer intervals configured, Hello 10, Dead 40, Wait 40, Retransmit 5
+         Hello due in 00:00:00
+         Adjacency State FULL (Hello supressed)
+         Index 2/4, retransmission queue length 1, number of retransmition 1
+         First 0x2C8F8E(15)/0x0(0) Next 0x2C8F8E(15)/0x0(0)
+         Last retransmission scan length is 1, maximum is 1
+         Last retramsmission scan time is 0 msec, maximum is 0 msec
+         Link State retransmission due in 3044 msec
+
+  
+Виртуальные каналы просто настраивать, но по какой-то причине они пугают людей. По моему опыту, сообщение об ошибке, как для маршрутизатора R3, вызывает панику, но все, что значит такое сообщение — только то, что настройка виртуального канала не закончена.  
+Знания _рассеивают_ страх и панику.  
+99% ошибок при настройке виртуального канала вызывают следующие действия:  
+\--использование неправильного значения RID  
+\--попытка использовать stub-зону в качестве транзитной  
+\--**ошибка при настройке аутентификации для виртуального канала, в случае, когда зона 0 использует аутентификацию.**  
+Этот третий случай выделен специально. Последнее всегда забывается! Виртуальный канал — это расширение зоны 0, и если зона 0 использует аутентификацию, она должна быть настроена и для виртуального канала тоже.  
+В этом разделе мы рассмотрели много команд OSPF, но не забывайте вашего старого друга — _show ip protocols_. Безотносительно типа сети, эта команда покажет вам маршрутизируемые сети, информацию об аутентификации для канала, и многое другое. Это замечательная команда для начала устранения проблем для любого протокола маршрутизации.
+
+    R3#show ip protocols
+    Routing Protocol is "ospf 1"
+      Outgoing update filter list for all interfaces is not set
+      Incoming update filter list for all interfaces is not set
+      Router ID 3.3.3.3
+      It is an area border router
+      Number of areas in this router is 3. 3 normal 0 stub 0 nssa
+      Maximum path: 4
+      Routing for networks:
+          172.12.13.0  0.0.0.31  area 13
+          172.12.123.0  0.0.0.255 area 0
+          172.23.23.0  0.0.0.31 area 34
+      Routing Information Sources:
+         Gateway       Distance         Last Update
+         4.4.4.4            110         00:28:41
+         8.8.8.8            110         00:28:41
+         1.1.1.1            110         00:28:41
+         3.3.3.3            110         00:35:30
+      Distance: (default is 110)
+
 [1]: https://habrastorage.org/files/d79/ee0/8bc/d79ee08bc1da4f1dae09ce7bf4657fb5.png
 [2]: https://habrastorage.org/files/6b8/59f/ff5/6b859fff55154b3a85f7088facc4f4a3.png
 [3]: https://habrastorage.org/files/44a/d43/e64/44ad43e6471042bbadaae4d94fb57ccf.png
@@ -252,3 +549,7 @@ RID будут такими:
 [5]: https://habrastorage.org/files/aec/b02/09d/aecb0209df704189b967612bc496a0c9.png
 [6]: https://habrastorage.org/files/461/391/9ed/4613919edfa54cb4926ae22d9fec5b09.png
 [7]: https://habrastorage.org/files/5d0/7fc/599/5d07fc599d174a9598551ed4ba1b5e22.png
+[8]: https://habrastorage.org/files/982/82b/c68/98282bc68ffd4b188c74ac0bc2b02363.png
+[9]: https://habrastorage.org/files/6da/89e/ed1/6da89eed1dfb4598bdef0ea6e1182b2d.png
+[10]: https://habrastorage.org/files/0bf/8e3/377/0bf8e33775d44ee785923a6777127a7d.png
+[11]: https://habrastorage.org/files/5f5/f68/5b1/5f5f685b134f4bb2a7c0be6d8948c176.png
