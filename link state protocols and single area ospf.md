@@ -672,6 +672,154 @@ OSPF присваивает стоимость каждому интерфейс
 
 Предпочтительным является путь с наименьшей стоимостью. Как и RIP, OSPF использует балансировку нагрузки до четырех интерфейсов с равными стоимостями пути по-умолчанию.
 
+Вы можете изменить значение, которое OSPF использует для вычисления стоимости пути. Если у вас действительно _есть_ хорошая причина изменить значение 100,000,000, вы можете использовать команду _ospf auto-cost reference-bandwidth_. Самое забавное, что эта команда требует указания скорости в MBPS:
+
+<pre>
+	R2#conf t
+	Enter configuration commands? one per line. End with CNTL/Z.
+	R2(config)#router ospf 1
+	R2(config-router)#auto-cost reference-bandwidth ?
+		<1-4294967> The reference bandwidth in terms of Mbits per second
+</pre>
+
+Хорошей причиной для такого изменения может стать добавление интерфейсов FastEthernet и GigEthernet в вашу сеть.
+
+### Сравнение OSPF и RIP
+
+OSPF считается лучше RIP, вот несколько причин почему:
+\-- метрика OSPF более точна для измерения действительного расстояния до удаленной сети.
+\-- в OSPF используется композитная метрика, _стоимость_, тогда в RIP вся метрика основана на числе прыжков.
+\-- OSPF не накладывает ограничений, когда сеть "доступна" или "недоступна", тогда как в RIP максимальное число прыжков - 15 для борьбы со счетом до бесконечности.
+\-- OSPF поддерживает VLSM, тогда как RIPv1 нет. Хотя в RIPv2 есть поддержка VLSM. Протокол с поддержкой VLSM позволяет более эффективно использовать адресное пространство.
+\-- OSPF использует пропускую способность сети более эффективно, чем RIP.
+\-- многоадресная рассылка обновлений OSPF происходит только при установлении соседства, изменениях в сети или истечения 30-минутного периода времени, за который произошли изменения в сети.
+\-- OSPF конвергирует быстрее любой версии RIP.
+
+Главный недостаток OSPF, особенно в сравнении с RIP, то что OSPF тратит намного больше ресурсов маршрутизатора (ЦПУ и память), чем RIP.
+
+### Устранение неполадок соседних маршрутизаторов
+
+Как вы знаете из курса CCNA, установление соседства в OSPF проходит через следущие этапы: _Down, Attempt, Init, 2-Way, Exstart, Exchange, Loading, Full_. Вот небольшой обзор того, что происходит на каждом этапе:
+
+\-- _Down_ - от соседа не получено ни одного Hello-пакета.
+\-- _Attempt_ - одноадресатный Hello-пакет отправлен соседу. Такое можно встретить только в сетях NBMA, так как там используется команда _neighbor_.
+\-- _Init_ - первый Hello-пакет получен от соседа.
+\-- _2-Way_ - каждый маршрутизатор получил Hello-пакет, содержащий его собственный RID, следовательно двусторонний обмен сообщениями имел место. Когда маршрутизатор получает Hello-пакет, содержащий его собственный RID, это такой способ для удаленного маршрутизатора сказать "Я получил Hello-пакет, отправленный вами ранее".
+\-- _Exstart_ - происходит выбор DR/BDR, начинается обмен информацией из базы данных состояния канала. Маршрутизатор с большим значением OSPF RID начнет обмен и увеличит значение первоначального порядкового номера, заданного на данном этапе.
+\-- _Exchange_ - произошел обмен пакетами дескриптора БД (DBD). Эти пакеты содержат описание базы данных состояния канала.
+\-- _Loading_ - маршрутизаторы отправляют LSR своим потенциальным соседям.
+\-- _Full_ - базы данных синхронизированы и соседство установлено.
+
+Всегда пользуйтесь командами _show ip ospf neighbor_ и _show ip ospf interface_, чтобы убедиться, что соседство действительно установлено (этап Full). Соседство можно посмотреть с помощью любой из этих команд. _Show ip ospf neighbor_ дает вам основную информацию относительно соседства, тогда как команда _interface_ - более детальную.
+
+<pre>
+	R1#show ip ospf neighbor
+
+	Neighbor ID    Pri     State       Dead Time   Address      Interface
+	19.1.1.1        1   2WAY/DROTHER    00:00:38   100.1.1.5    Ethernet0
+	172.12.123.3    1     FULL/-        00:00:35   13.13.13.3   Serial1
+
+	R1#show ip ospf interface ethernet 0
+	Ethernet0 is up, line protocol is up
+		Internet Address 100.1.1.1/24, Area 0
+		<b>Process ID 1, Router ID 10.1.1.1, Network Type BROADCAST, Cost: 10</b>
+		Transmit Delay is 1 sec, <b>State BDR, Priority 1</b>
+		Designater Router (ID) 19.1.1.1, Interface address 100.1.1.5
+		Backup Designated router (ID) 10.1.1.1, Interface address 100.1.1.1
+		Timer intervals configured, Hello 10, Dead 40, Wait 40, Retransmit 5
+			Hello due in 00:00:06
+		Index 2/2, flood queue length 0
+		Next 0x0(0)/0x0(0)
+		Last flood scan length is 1, maximum is 1
+		Last flood scan time is 0 msec, maximum is 0 msec
+		Neighbor Count is 1 , Adjacent neighbor count is 1
+			<b>Adjacent with neighbor 19.1.1.1 (Designated Router)</b>
+		Supress Hello for 0 neighbor(s)
+</pre>
+
+_Show ip ospf interface_ замечательная команда для просмотра деталей, связанных с Hello- и Dead-таймерами. Если вы не видите проблему с помощью команды _show_, можете запустить _debug ip ospf adj_, чтобы видеть как формируется (или нет) соседство. Вот часть вывода этой команды, можно видеть этапы процесса установления соседства в OSPF, вплоть до этапа Full:
+
+<pre>
+4d22h: OSPF: Rcv DBD from 10.1.1.1 on Serial1 seq 0x5DD opt 0x42 flag 0x7 len32 mtu 1500 state <b>INIT</b>
+4d22h: OSPF: 2 Way Communication to 10.1.1.1 on Serial1, state <b>2WAY</b>
+4d22h: OSPF: Send DBD to 10.1.1.1 on Serial1 seq 0x14EC opt 42 flag 0x7 len 32 
+4d22h: OSPF: First DBD and we are not SLAVE
+4d22h: OSFP: Rcv DBD from 10.1.1.1 on Serial1 seq 0x14EC opt 0x42 flag 0x2 len 92 mtu 1500 state <b>EXSTART</b>
+4d22h: OSPF: NBR Negotiation Done. We are the <b>MASTER</b>
+4d22h: OSPF: Send DBD to 10.1.1.1 on Serial1 seq 0x14ED opt 0x42 flag 0x3 len 92
+4d22h: OSPF: Database request to 10.1.1.1
+4d22h: OSPF: sent LS REQ packet to 13.13.13.1, length 12
+4d22h: OSPF: Rcv DBD from 10.1.1.1 on Serial1 seq 0x14ED opt 0x42 flag 0x0 len 32 mtu 1500 state <b>EXCHANGE</b>
+4d22h: OSPF: Send DBD to 10.1.1.1 on Serial1 seq 0x14EE opt 42 flag 0x1 len 32
+4d22h: OSPF: Rcv DBD from 10.1.1.1 on Serial1 seq 0x14EЕ opt 0x42 flag 0x0 len 32 mtu 1500 state <b>EXCHANGE</b>
+4d22h: OSPF: Exchange Done with 10.1.1.1 on Serial1
+R22h: OSPF: Synchronized with 10.1.1.1 on Serail1, state FULL
+4d22h: %OSPF-5-ADJCHG: Process 1, Nbr 10.1.1.1 on Serial1 from <b>LOADING</b> to <b>FULL</b>,
+Loading Done
+
+4d22h: OSPF: Build Router LSA for area 0, router ID 172.12.123.3, seq 0x80000005
+</pre>
+
+Кратко, для образования соседства должны быть согласованы следующие параметры:
+\-- Hello- и Dead-таймеры.
+\-- Area ID.
+\-- флаг stub-зоны (on\off).
+\-- пароль (если используется, то должен быть у обоих соседей).
+
+Номер процесса совпадать не должен - это локальный параметр. (Да, знаю, я об этом уже говорил. И повторяю снова!:))
+
+###Поведение соседей c несколькими маршрутизаторами OSPF в широковещательном сегменте
+
+Когда у вас более 2 маршрутизаторов в широковещательном сегменте, результаты соседства могут быть интересными. Меня часто спрашивали об этом на Facebook и Twitter (@ccie12933, кстати), так что решил включить ответ сюда.
+
+------вставить картинку--------
+
+Выборы уже прошли, R1 - DR, R2 - BDR, R3, R4 - DROTHERS. Таблица соседей OSPF на маршрутизаторах R1 и 2 выглядит ожидаемо, но на R3 и 4 - несколько странно.
+
+<pre>
+	Router1#show ip ospf nei
+
+	Neighbor ID    Pri     State              Dead Time   Address      Interface
+	4.4.4.4        1   FULL/DROTHER           00:00:33   30.1.1.4    Ethernet0
+	3.3.3.3        1   FULL/DROTHER           00:00:31   30.1.1.3    Ethernet0
+	2.2.2.2        1     FULL/BDR             00:00:30   30.1.1.2    Ethernet0
+
+	Router2#show ip ospf nei
+
+	Neighbor ID    Pri     State              Dead Time   Address      Interface
+	4.4.4.4        1   FULL/DROTHER           00:00:35   30.1.1.4    Ethernet0
+	3.3.3.3        1   FULL/DROTHER           00:00:33   30.1.1.3    Ethernet0
+	1.1.1.1        1     FULL/DR              00:00:39   30.1.1.1    Ethernet0
+
+	Router3#show ip ospf nei
+
+	Neighbor ID    Pri     State              Dead Time   Address      Interface
+	4.4.4.4        1   <b>2WAY/DROTHER</b>    00:00:35   30.1.1.4    Ethernet0
+	2.2.2.2        1   FULL/DROTHER           00:00:32   30.1.1.2    Ethernet0
+	1.1.1.1        1     FULL/DR              00:00:39   30.1.1.1    Ethernet0
+
+	Router4#show ip ospf nei
+
+	Neighbor ID    Pri     State              Dead Time   Address      Interface
+	2.2.2.2        1     FULL/BDR             00:00:29   30.1.1.2    Ethernet0
+	1.1.1.1        1     FULL/DR              00:00:37   30.1.1.1    Ethernet0
+	3.3.3.3        1   <b>2WAY/DROTHER</b>    00:00:30   30.1.1.3    Ethernet0
+</pre>
+
+Вы услышите выражение "stuck in 2-way", и многие считают, что так всегда происходит, но это не обязательно. DROTHER-ы никогда не закончат формировать соседство. Мы можем вернуться завтра и _снова_ увидеть "2-way".
+
+Такое поведение по-умолчанию в OSPF ограничивает количество переданных пакетов LSA в широковещательном сегменте с числом маршрутизаторов больше 2.
+
+Единственные маршрутизаторы, у которых есть соседство в сегменте со всеми остальными маршрутизаторами, это - DR и BDR. Каждый DRother будет формировать полное соседство с DR и BDR, но не с другим DRother-ом.
+
+По этой причине любой маршрутизатор, заметивший изменения в сети, будет передавать информацию об этом только DR и BDR маршрутизаторам, оставшиеся DRother-ы узнают о них от DR.
+
+_Теперь мы знаем основы OSPF идеально..._
+
+_...давайте возьмемся за мультизоновый OSPF_
+
+_Конец главы_
+
 [1]: https://habrastorage.org/files/d79/ee0/8bc/d79ee08bc1da4f1dae09ce7bf4657fb5.png
 [2]: https://habrastorage.org/files/6b8/59f/ff5/6b859fff55154b3a85f7088facc4f4a3.png
 [3]: https://habrastorage.org/files/44a/d43/e64/44ad43e6471042bbadaae4d94fb57ccf.png
